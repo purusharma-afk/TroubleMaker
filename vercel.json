@@ -3,9 +3,6 @@
   "framework": null,
   "outputDirectory": "public",
   "functions": {
-    "app.cjs": {
-      "includeFiles": "public/**"
-    },
     "api/**/*.js": {
       "maxDuration": 15
     }
