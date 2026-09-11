@@ -3,9 +3,14 @@
   "framework": null,
   "buildCommand": null,
   "outputDirectory": "public",
+  "rewrites": [
+    { "source": "/", "destination": "/api/site" },
+    { "source": "/index.html", "destination": "/api/site" }
+  ],
   "functions": {
     "api/**/*.js": {
-      "maxDuration": 15
+      "maxDuration": 15,
+      "includeFiles": "public/index.html"
     }
   }
 }

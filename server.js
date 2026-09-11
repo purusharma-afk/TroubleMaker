@@ -26,6 +26,7 @@ const json = (res, status, body, headers = {}) => { const value = JSON.stringify
 const noContent = res => { res.writeHead(204, { 'access-control-allow-origin': '*' }); res.end(); };
 const readBody = req => new Promise((resolve, reject) => { let body = ''; req.on('data', chunk => { body += chunk; if (body.length > 1000000) req.destroy(); }); req.on('end', () => { try { resolve(body ? JSON.parse(body) : {}); } catch (error) { reject(error); } }); req.on('error', reject); });
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const outagePage = enabled => `<!doctype html><html><head><meta charset="utf-8"><title>503 · Temporarily unavailable</title><style>body{font:14px system-ui;max-width:520px;margin:15vh auto;padding:32px;color:#1d2a26}button{background:#1d2a26;color:#fff;border:0;padding:12px 17px;cursor:pointer}</style></head><body><small>503 · Synthetic outage</small><h1>Temporarily unavailable.</h1><p>This availability simulation is active.</p><button onclick="fetch('/api/outage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({enabled:false})}).then(()=>location.reload())">Restore website</button></body></html>`;
 
 async function writeEvent(event) {
   if (!pool || !dbReady) return;
@@ -149,6 +150,13 @@ const server = http.createServer(async (req, res) => {
       return await route(req, res, url, body, ctx);
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { ok: false, error: 'method_not_allowed' });
+    if (url.pathname === '/' && dbReady) {
+      const outage = await getOutageState();
+      if (outage.outage_enabled) {
+        res.writeHead(503, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'retry-after': '60' });
+        return res.end(outagePage(true));
+      }
+    }
     const requested = url.pathname === '/' ? '/index.html' : url.pathname;
     const file = path.join(staticRoot, requested);
     if (!file.startsWith(staticRoot) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return json(res, 404, { ok: false, error: 'not_found' });
