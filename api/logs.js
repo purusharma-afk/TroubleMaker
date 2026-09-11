@@ -1,0 +1,2 @@
+const { pool, schemaReady, json } = require('../lib/observability');
+module.exports = async function handler(req, res) { try { await schemaReady; const result = await pool.query('SELECT * FROM meant_to_break_events ORDER BY occurred_at DESC LIMIT 200'); return json(res, 200, { ok: true, events: result.rows }); } catch (error) { return json(res, 503, { ok: false, error: 'database_not_ready' }); } };

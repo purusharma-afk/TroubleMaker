@@ -24,3 +24,7 @@ The local API service loads `MEANT_TO_BREAK_DATABASE_URL` from `.env`, creates t
 Every request carries a `correlation_id` and `trace_id`. Events include service, endpoint, status, timing, level, error code, scenario, parent span, and metadata. The user-facing website only displays a generic error and a reference ID; it does not expose root-cause analysis.
 
 The support page can download recent events through `GET /api/logs` for inspection. The health endpoint is `GET /api/health`.
+
+## Vercel deployment
+
+The `api/` directory contains Vercel-compatible Node.js functions, while `server.js` remains the local development server. Configure `MEANT_TO_BREAK_DATABASE_URL` as a Vercel environment variable for Preview and Production; never upload `.env`.
