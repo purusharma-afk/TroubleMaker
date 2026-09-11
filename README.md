@@ -33,4 +33,4 @@ The committed `public/` directory is the Vercel static output. The build command
 
 ## Availability simulation
 
-The storefront has a hidden operator control for testing Vedin's availability detection. Click the footer brand mark seven times, enter the value configured as `MEANT_TO_BREAK_BREAKER_KEY`, and choose `Take website down`. The switch is stored in PostgreSQL, makes `/api/health` return `503` with `SYNTHETIC_OUTAGE`, and rejects application API calls while leaving the static page and operator control available for recovery. Use `Restore website` when the test is complete.
+The storefront has a hidden operator control for testing Vedin's availability detection. Click the footer brand mark three times and choose `Take website down`. The switch is stored in PostgreSQL, makes `/api/health` return `503` with `SYNTHETIC_OUTAGE`, and rejects application API calls while leaving the static page and operator control available for recovery. Use `Restore website` when the test is complete.

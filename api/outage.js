@@ -1,5 +1,4 @@
 const {
-  breakerAuthorized,
   context,
   getOutageState,
   setOutageState,
@@ -9,7 +8,6 @@ const {
 
 module.exports = async function handler(req, res) {
   if (!['GET', 'POST'].includes(req.method)) return json(res, 405, { ok: false, error: 'METHOD_NOT_ALLOWED' });
-  if (!breakerAuthorized(req)) return json(res, 401, { ok: false, error: 'OPERATOR_KEY_REQUIRED' });
 
   try {
     const current = await getOutageState();

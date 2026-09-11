@@ -38,13 +38,6 @@ async function logEvent(ctx, values) {
   return event;
 }
 
-function breakerAuthorized(req) {
-  const expected = process.env.MEANT_TO_BREAK_BREAKER_KEY;
-  const supplied = req.headers['x-breaker-key'];
-  if (!expected || typeof supplied !== 'string' || supplied.length !== expected.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
-}
-
 async function getOutageState() {
   if (!pool || !dbReady) throw new Error('database_not_ready');
   const result = await pool.query("SELECT outage_enabled, outage_reason, updated_at FROM meant_to_break_control WHERE control_key = 'global'");
@@ -73,7 +66,6 @@ async function route(req, res, url, body, ctx) {
   if (req.method === 'OPTIONS') return noContent(res);
   if (url.pathname === '/api/outage') {
     if (!['GET', 'POST'].includes(req.method)) return json(res, 405, { ok: false, error: 'METHOD_NOT_ALLOWED' });
-    if (!breakerAuthorized(req)) return json(res, 401, { ok: false, error: 'OPERATOR_KEY_REQUIRED' });
     try {
       const current = await getOutageState();
       if (req.method === 'GET') return json(res, 200, { ok: true, ...current });
