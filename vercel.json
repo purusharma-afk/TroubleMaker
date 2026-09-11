@@ -3,7 +3,7 @@
   "outputDirectory": "public",
   "functions": {
     "app.cjs": {
-      "includeFiles": ["public/**"]
+      "includeFiles": "public/**"
     },
     "api/**/*.js": {
       "maxDuration": 15
