@@ -16,6 +16,7 @@ loadEnv();
 
 const port = Number(process.env.MEANT_TO_BREAK_API_PORT || 5181);
 const databaseUrl = process.env.MEANT_TO_BREAK_DATABASE_URL;
+const staticRoot = fs.existsSync(path.join(__dirname, 'public', 'index.html')) ? path.join(__dirname, 'public') : __dirname;
 const pool = databaseUrl ? new Pool({ connectionString: databaseUrl, max: 5, connectionTimeoutMillis: 8000, idleTimeoutMillis: 30000 }) : null;
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 let dbReady = false;
@@ -108,8 +109,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { ok: false, error: 'method_not_allowed' });
     const requested = url.pathname === '/' ? '/index.html' : url.pathname;
-    const file = path.join(__dirname, requested);
-    if (!file.startsWith(__dirname) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return json(res, 404, { ok: false, error: 'not_found' });
+    const file = path.join(staticRoot, requested);
+    if (!file.startsWith(staticRoot) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return json(res, 404, { ok: false, error: 'not_found' });
     const ext = path.extname(file); const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
     res.writeHead(200, { 'content-type': `${types[ext] || 'application/octet-stream'}; charset=utf-8` }); res.end(fs.readFileSync(file));
   } catch (error) { console.error('[request-error]', error); if (!res.headersSent) json(res, 500, { ok: false, error: 'internal_server_error' }); }

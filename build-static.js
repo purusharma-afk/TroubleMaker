@@ -5,8 +5,8 @@ const root = __dirname;
 const output = path.join(root, 'public');
 fs.mkdirSync(output, { recursive: true });
 
-for (const file of ['index.html', 'app.js', 'styles.css']) {
-  fs.copyFileSync(path.join(root, file), path.join(output, file));
-}
+fs.copyFileSync(path.join(root, 'index.html'), path.join(output, 'index.html'));
+fs.copyFileSync(path.join(root, 'app.js'), path.join(output, 'client.js'));
+fs.copyFileSync(path.join(root, 'styles.css'), path.join(output, 'styles.css'));
 
 console.log(`Static frontend copied to ${path.relative(root, output)}/`);
