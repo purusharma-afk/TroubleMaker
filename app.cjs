@@ -14,9 +14,12 @@ module.exports = function handler(req, res) {
   const file = path.resolve(staticRoot, relative);
 
   if (!file.startsWith(`${staticRoot}${path.sep}`) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
-    return res.status(404).send('Not found');
+    res.statusCode = 404;
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    return res.end('Not found');
   }
 
   res.setHeader('Content-Type', contentTypes[path.extname(file)] || 'application/octet-stream');
-  return res.status(200).send(fs.readFileSync(file));
+  res.statusCode = 200;
+  return res.end(fs.readFileSync(file));
 };
