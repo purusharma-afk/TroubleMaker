@@ -3,9 +3,10 @@
   "framework": null,
   "buildCommand": null,
   "outputDirectory": "public",
-  "rewrites": [
-    { "source": "/", "destination": "/api/site" },
-    { "source": "/index.html", "destination": "/api/site" }
+  "routes": [
+    { "src": "^/$", "dest": "/api/site" },
+    { "src": "^/index\\.html$", "dest": "/api/site" },
+    { "handle": "filesystem" }
   ],
   "functions": {
     "api/**/*.js": {
