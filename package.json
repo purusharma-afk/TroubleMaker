@@ -2,6 +2,7 @@
   "name": "meant-to-break",
   "version": "0.1.0",
   "private": true,
+  "type": "commonjs",
   "description": "A normal product website with controlled API failures and correlated PostgreSQL logs",
   "scripts": {
     "start": "node server.js",
