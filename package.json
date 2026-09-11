@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "type": "commonjs",
-  "main": "app.cjs",
   "description": "A normal product website with controlled API failures and correlated PostgreSQL logs",
   "scripts": {
     "start": "node server.js",
