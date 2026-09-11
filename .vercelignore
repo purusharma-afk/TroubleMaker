@@ -1,0 +1,7 @@
+# Local-only development server; Vercel should use the api/ functions.
+server.js
+
+# Never send local credentials or local dependency state to Vercel.
+.env
+node_modules/
+.DS_Store
