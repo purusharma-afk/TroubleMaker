@@ -38,6 +38,26 @@ async function logEvent(ctx, values) {
   return event;
 }
 
+function breakerAuthorized(req) {
+  const expected = process.env.MEANT_TO_BREAK_BREAKER_KEY;
+  const supplied = req.headers['x-breaker-key'];
+  if (!expected || typeof supplied !== 'string' || supplied.length !== expected.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+}
+
+async function getOutageState() {
+  if (!pool || !dbReady) throw new Error('database_not_ready');
+  const result = await pool.query("SELECT outage_enabled, outage_reason, updated_at FROM meant_to_break_control WHERE control_key = 'global'");
+  return result.rows[0] || { outage_enabled: false, outage_reason: 'Synthetic website outage', updated_at: null };
+}
+
+async function setOutageState(ctx, enabled, reason) {
+  const result = await pool.query("UPDATE meant_to_break_control SET outage_enabled = $1, outage_reason = $2, updated_at = NOW() WHERE control_key = 'global' RETURNING outage_enabled, outage_reason, updated_at", [enabled, reason || 'Synthetic website outage']);
+  const state = result.rows[0];
+  await logEvent(ctx, { service: 'availability-control', level: enabled ? 'ERROR' : 'INFO', message: enabled ? 'Synthetic website outage enabled' : 'Synthetic website outage restored', statusCode: enabled ? 503 : 200, errorCode: enabled ? 'SYNTHETIC_OUTAGE' : 'SERVICE_RESTORED', scenario: 'availability', metadata: { reason: state.outage_reason } });
+  return state;
+}
+
 async function callService(ctx, service, message, values = {}) { const child = { ...ctx, parentSpanId: ctx.spanId, spanId: ids('span') }; await logEvent(child, { service, level: values.level || 'INFO', message, statusCode: values.statusCode, durationMs: values.durationMs || 2, errorCode: values.errorCode, scenario: values.scenario, metadata: values.metadata }); return child; }
 async function startRequest(req, url) { return { correlationId: req.headers['x-correlation-id'] || ids('cor'), traceId: req.headers['x-trace-id'] || ids('trace'), spanId: ids('span'), method: req.method, endpoint: url.pathname, parentSpanId: null }; }
 
@@ -51,11 +71,40 @@ const scenarios = {
 
 async function route(req, res, url, body, ctx) {
   if (req.method === 'OPTIONS') return noContent(res);
-  if (req.method === 'GET' && url.pathname === '/api/health') return json(res, 200, { ok: true, database: dbReady, service: 'meant-to-break-api', environment: 'local-staging' });
+  if (url.pathname === '/api/outage') {
+    if (!['GET', 'POST'].includes(req.method)) return json(res, 405, { ok: false, error: 'METHOD_NOT_ALLOWED' });
+    if (!breakerAuthorized(req)) return json(res, 401, { ok: false, error: 'OPERATOR_KEY_REQUIRED' });
+    try {
+      const current = await getOutageState();
+      if (req.method === 'GET') return json(res, 200, { ok: true, ...current });
+      const enabled = typeof body.enabled === 'boolean' ? body.enabled : !current.outage_enabled;
+      const reason = String(body.reason || 'Synthetic website outage').slice(0, 240);
+      return json(res, 200, { ok: true, ...(await setOutageState(ctx, enabled, reason)) });
+    } catch (error) {
+      return json(res, 503, { ok: false, error: 'DATABASE_NOT_READY' });
+    }
+  }
+  if (req.method === 'GET' && url.pathname === '/api/health') {
+    if (!dbReady) return json(res, 503, { ok: false, healthy: false, database: false, error: 'DATABASE_NOT_READY' });
+    const outage = await getOutageState();
+    if (outage.outage_enabled) return json(res, 503, { ok: false, healthy: false, database: true, error: 'SYNTHETIC_OUTAGE', outageSimulation: true });
+    return json(res, 200, { ok: true, healthy: true, database: true, service: 'meant-to-break-api', environment: 'local-staging' });
+  }
   if (req.method === 'GET' && url.pathname === '/api/logs') {
     if (!pool || !dbReady) return json(res, 503, { ok: false, error: 'database_not_ready' });
     const result = await pool.query('SELECT * FROM meant_to_break_events ORDER BY occurred_at DESC LIMIT 200');
     return json(res, 200, { ok: true, events: result.rows });
+  }
+  if (url.pathname.startsWith('/api/')) {
+    try {
+      const outage = await getOutageState();
+      if (outage.outage_enabled) {
+        await logEvent(ctx, { service: 'availability-gate', level: 'ERROR', message: 'Request rejected while synthetic website outage is enabled', statusCode: 503, errorCode: 'SYNTHETIC_OUTAGE', scenario: 'availability', metadata: { reason: outage.outage_reason } });
+        return json(res, 503, { ok: false, healthy: false, error: 'SYNTHETIC_OUTAGE', message: 'The service is temporarily unavailable.', correlationId: ctx.correlationId, outageSimulation: true });
+      }
+    } catch (error) {
+      // The normal route handlers return their existing database-not-ready response.
+    }
   }
   if (req.method === 'POST' && url.pathname === '/api/events') {
     await logEvent(ctx, { service: body.service || 'browser', level: body.level || 'INFO', message: body.message || 'browser event', statusCode: body.statusCode || 200, durationMs: body.durationMs || 0, errorCode: body.errorCode, scenario: body.scenario, metadata: body.metadata || {} });

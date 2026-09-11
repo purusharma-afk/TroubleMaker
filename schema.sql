@@ -21,3 +21,14 @@ CREATE TABLE IF NOT EXISTS meant_to_break_events (
 CREATE INDEX IF NOT EXISTS idx_mtb_events_correlation ON meant_to_break_events (correlation_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_mtb_events_occurred_at ON meant_to_break_events (occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_mtb_events_service ON meant_to_break_events (service, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS meant_to_break_control (
+  control_key TEXT PRIMARY KEY,
+  outage_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  outage_reason TEXT NOT NULL DEFAULT 'Synthetic website outage',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO meant_to_break_control (control_key)
+VALUES ('global')
+ON CONFLICT (control_key) DO NOTHING;
