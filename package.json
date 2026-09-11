@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "frontend": "python3 -m http.server 5180"
+    "frontend": "python3 -m http.server 5180",
+    "build": "node build-static.js"
   },
   "dependencies": {
     "pg": "^8.16.3"

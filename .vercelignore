@@ -1,5 +1,9 @@
 # Local-only development server; Vercel should use the api/ functions.
 server.js
+build-static.js
+index.html
+app.js
+styles.css
 
 # Never send local credentials or local dependency state to Vercel.
 .env
