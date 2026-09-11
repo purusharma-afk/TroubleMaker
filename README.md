@@ -28,3 +28,5 @@ The support page can download recent events through `GET /api/logs` for inspecti
 ## Vercel deployment
 
 The `api/` directory contains Vercel-compatible Node.js functions, while `server.js` remains the local development server. Configure `MEANT_TO_BREAK_DATABASE_URL` as a Vercel environment variable for Preview and Production; never upload `.env`.
+
+The committed `public/` directory is the Vercel static output. The build command intentionally does not execute browser or local-server files.
