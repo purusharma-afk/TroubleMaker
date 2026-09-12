@@ -23,6 +23,8 @@ The local API service loads `MEANT_TO_BREAK_DATABASE_URL` from `.env`, creates t
 
 Every request carries a `correlation_id` and `trace_id`. Events include service, endpoint, status, timing, level, error code, scenario, parent span, and metadata. The user-facing website only displays a generic error and a reference ID; it does not expose root-cause analysis.
 
+Failure events also include a `metadata.diagnostics` object with a redacted synthetic stack trace, exception type, repository source file and line, dependency, root-cause signal, suggested fix, and deployment release. These deterministic traces are intentionally tied to the failure scenarios so an SRE agent can correlate the user-facing error with the repository evidence. They are marked `synthetic: true` and do not contain credentials or customer data.
+
 The support page can download recent events through `GET /api/logs` for inspection. The health endpoint is `GET /api/health`.
 
 ## Vercel deployment

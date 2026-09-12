@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { Pool } = require('pg');
+const { diagnosticMetadata } = require('./lib/diagnostics');
 
 function loadEnv() {
   const envPath = path.join(__dirname, '.env');
@@ -30,7 +31,7 @@ const outagePage = enabled => `<!doctype html><html><head><meta charset="utf-8">
 
 async function writeEvent(event) {
   if (!pool || !dbReady) return;
-  await pool.query(`INSERT INTO meant_to_break_events (occurred_at, correlation_id, trace_id, span_id, parent_span_id, service, environment, method, endpoint, status_code, duration_ms, level, message, error_code, scenario, metadata) VALUES (COALESCE($1, NOW()), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`, [event.occurredAt || null, event.correlationId, event.traceId, event.spanId, event.parentSpanId || null, event.service, 'local-staging', event.method, event.endpoint, event.statusCode ?? null, event.durationMs ?? null, event.level, event.message, event.errorCode || null, event.scenario || null, event.metadata || {}]);
+  await pool.query(`INSERT INTO meant_to_break_events (occurred_at, correlation_id, trace_id, span_id, parent_span_id, service, environment, method, endpoint, status_code, duration_ms, level, message, error_code, scenario, metadata) VALUES (COALESCE($1, NOW()), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`, [event.occurredAt || null, event.correlationId, event.traceId, event.spanId, event.parentSpanId || null, event.service, 'local-staging', event.method, event.endpoint, event.statusCode ?? null, event.durationMs ?? null, event.level, event.message, event.errorCode || null, event.scenario || null, diagnosticMetadata(event)]);
 }
 
 async function logEvent(ctx, values) {
