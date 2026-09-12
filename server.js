@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { Pool } = require('pg');
-const { diagnosticMetadata } = require('./lib/diagnostics');
+const { diagnosticMetadata, runtimeDiagnosticMetadata } = require('./lib/diagnostics');
 
 function loadEnv() {
   const envPath = path.join(__dirname, '.env');
@@ -38,6 +38,19 @@ async function logEvent(ctx, values) {
   const event = { ...values, correlationId: ctx.correlationId, traceId: ctx.traceId, spanId: values.spanId || ids('span'), parentSpanId: values.parentSpanId || ctx.parentSpanId, method: values.method || ctx.method, endpoint: values.endpoint || ctx.endpoint };
   try { await writeEvent(event); } catch (error) { console.error('[log-write-failed]', error.message); }
   return event;
+}
+
+async function logException(ctx, error, values = {}) {
+  return logEvent(ctx, {
+    service: values.service || 'application',
+    level: 'ERROR',
+    message: values.message || error?.message || 'Unhandled application error',
+    statusCode: values.statusCode || 500,
+    durationMs: values.durationMs,
+    errorCode: values.errorCode || error?.code || 'APPLICATION_ERROR',
+    scenario: values.scenario,
+    metadata: runtimeDiagnosticMetadata(error, values),
+  });
 }
 
 async function getOutageState() {
@@ -112,12 +125,19 @@ async function route(req, res, url, body, ctx) {
 
   if (req.method === 'GET' && url.pathname === '/api/search') {
     const query = url.searchParams.get('q') || '';
-    await logEvent(ctx, { service: 'search-ui', message: `search submitted q=${query}`, statusCode: 200, metadata: { query } });
-    const catalog = await callService(ctx, 'catalog-api', 'search query accepted', { metadata: { query } });
-    await wait(35);
-    await logEvent(catalog, { service: 'postgres', level: 'WARN', message: 'product search query exceeded 2000ms', statusCode: 504, durationMs: 2000, errorCode: scenarios.search.code, scenario: 'search', metadata: { query, query_plan: 'sequential scan' } });
-    await logEvent(ctx, { service: 'catalog-api', level: 'ERROR', message: scenarios.search.message, statusCode: 504, durationMs: 2042, errorCode: scenarios.search.code, scenario: 'search' });
-    return json(res, 504, { ok: false, error: scenarios.search.code, message: scenarios.search.userMessage, correlationId: ctx.correlationId });
+    let catalogCtx = ctx;
+    try {
+      await logEvent(ctx, { service: 'search-ui', message: `search submitted q=${query}`, statusCode: 200, metadata: { query } });
+      catalogCtx = await callService(ctx, 'catalog-api', 'search query accepted', { metadata: { query, query_shape: 'catalog_name_lookup' } });
+
+      // Deliberate lab defect: the schema exposes product_name, but this query uses name.
+      const result = await pool.query('SELECT id, name, category, price FROM meant_to_break_catalog WHERE name ILIKE $1 ORDER BY id LIMIT 20', [`%${query}%`]);
+      await logEvent(catalogCtx, { service: 'postgres', message: 'catalog query completed', statusCode: 200, durationMs: 18, scenario: 'search', metadata: { query, row_count: result.rowCount } });
+      return json(res, 200, { ok: true, query, results: result.rows, correlationId: ctx.correlationId });
+    } catch (error) {
+      await logException(catalogCtx, error, { service: 'catalog-api', statusCode: 500, errorCode: 'CATALOG_QUERY_FAILED', scenario: 'search', sourceFile: 'server.js', sourceLine: 134, functionName: 'route', dependency: 'postgres', investigationHint: 'Compare the selected catalog column names with the meant_to_break_catalog table definition in schema.sql.', metadata: { query, query_shape: 'catalog_name_lookup' } });
+      return json(res, 500, { ok: false, error: 'CATALOG_QUERY_FAILED', message: 'Search is temporarily unavailable.', correlationId: ctx.correlationId });
+    }
   }
 
   const handlers = {
