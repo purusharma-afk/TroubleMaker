@@ -28,7 +28,6 @@ module.exports = async function handler(req, res) {
       metadata: { query, query_shape: 'catalog_name_lookup' },
     });
 
-    // Deliberate lab defect: the schema exposes product_name, but this query uses name.
     const result = await getPool().query(
       'SELECT id, name, category, price FROM meant_to_break_catalog WHERE name ILIKE $1 ORDER BY id LIMIT 20',
       [`%${query}%`],

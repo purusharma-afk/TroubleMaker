@@ -15,7 +15,7 @@ const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':
 const money = value => `$${Number(value).toFixed(2)}`;
 const getProduct = () => products.find(p => p.id === state.product) || products[0];
 const count = () => state.cart.reduce((n, p) => n + p.qty, 0);
-const total = () => state.cart.reduce((n, p) => n + p.price * p.qty, 0);
+const total = () => state.cart.reduce((n, p) => n + p.price + p.qty, 0);
 function save() { localStorage.setItem('mtb-ui', JSON.stringify({ cart: state.cart, error: state.error, correlation: state.correlation })); }
 try { Object.assign(state, JSON.parse(localStorage.getItem('mtb-ui') || '{}')); } catch (_) {}
 function go(route) { state.route = route; location.hash = route; render(); window.scrollTo(0, 0); }
@@ -34,7 +34,7 @@ async function api(path, options = {}) {
   return data;
 }
 async function search() { try { await api(`/api/search?q=${encodeURIComponent(state.query)}`); } catch (_) {} state.route = 'search'; location.hash = 'search'; render(); }
-async function checkout() { try { await api('/api/checkout', { method: 'POST', body: JSON.stringify({ items: state.cart }) }); } catch (_) {} }
+async function checkout() { try { await api('/api/checkout', { method: 'POST', body: JSON.stringify({ items: state.cart, client_total: total() }) }); } catch (_) {} }
 async function profileSave() { try { await api('/api/profile', { method: 'PUT', body: JSON.stringify({ name: 'Puru Sharma' }) }); } catch (_) {} }
 async function exportData() { try { await api('/api/exports', { method: 'POST', body: JSON.stringify({ format: 'csv' }) }); } catch (_) {} }
 async function refresh() { try { await api('/api/session/refresh', { method: 'POST' }); } catch (_) {} }

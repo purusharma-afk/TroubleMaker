@@ -37,6 +37,16 @@ VALUES
   ('Ridge Lantern', 'Camp', 68.00)
 ON CONFLICT DO NOTHING;
 
+CREATE TABLE IF NOT EXISTS meant_to_break_profiles (
+  id INTEGER PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1
+);
+
+INSERT INTO meant_to_break_profiles (id, display_name, version)
+VALUES (1, 'Puru Sharma', 1)
+ON CONFLICT (id) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS meant_to_break_control (
   control_key TEXT PRIMARY KEY,
   outage_enabled BOOLEAN NOT NULL DEFAULT FALSE,

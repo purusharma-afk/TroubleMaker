@@ -69,14 +69,6 @@ async function setOutageState(ctx, enabled, reason) {
 async function callService(ctx, service, message, values = {}) { const child = { ...ctx, parentSpanId: ctx.spanId, spanId: ids('span') }; await logEvent(child, { service, level: values.level || 'INFO', message, statusCode: values.statusCode, durationMs: values.durationMs || 2, errorCode: values.errorCode, scenario: values.scenario, metadata: values.metadata }); return child; }
 async function startRequest(req, url) { return { correlationId: req.headers['x-correlation-id'] || ids('cor'), traceId: req.headers['x-trace-id'] || ids('trace'), spanId: ids('span'), method: req.method, endpoint: url.pathname, parentSpanId: null }; }
 
-const scenarios = {
-  payment: { code: 'PAYMENT_PROVIDER', message: 'Payment provider is unavailable', userMessage: 'We could not process your payment. Please try again in a moment.' },
-  search: { code: 'CATALOG_TIMEOUT', message: 'Catalog query exceeded its deadline', userMessage: 'Search is taking longer than expected. Please try again.' },
-  profile: { code: 'PROFILE_CONFLICT', message: 'Optimistic version check failed', userMessage: 'Your profile was updated elsewhere. Refresh the page and try again.' },
-  export: { code: 'EXPORT_WORKER', message: 'Export worker rejected a null filter payload', userMessage: 'We could not prepare your export. Please try again later.' },
-  auth: { code: 'SESSION_REFRESH', message: 'Session cookie was not returned to the web origin', userMessage: 'Your session needs attention. Please sign in again.' },
-};
-
 async function route(req, res, url, body, ctx) {
   if (req.method === 'OPTIONS') return noContent(res);
   if (url.pathname === '/api/outage') {
@@ -92,6 +84,7 @@ async function route(req, res, url, body, ctx) {
     }
   }
   if (req.method === 'GET' && url.pathname === '/api/health') {
+    res.setHeader('cache-control', 'public, max-age=60');
     if (!dbReady) return json(res, 503, { ok: false, healthy: false, database: false, error: 'DATABASE_NOT_READY' });
     const outage = await getOutageState();
     if (outage.outage_enabled) return json(res, 503, { ok: false, healthy: false, database: true, error: 'SYNTHETIC_OUTAGE', outageSimulation: true });
@@ -99,8 +92,10 @@ async function route(req, res, url, body, ctx) {
   }
   if (req.method === 'GET' && url.pathname === '/api/logs') {
     if (!pool || !dbReady) return json(res, 503, { ok: false, error: 'database_not_ready' });
-    const result = await pool.query('SELECT * FROM meant_to_break_events ORDER BY occurred_at DESC LIMIT 200');
-    return json(res, 200, { ok: true, events: result.rows });
+    const requestedLimit = Number(url.searchParams.get('limit') || 200);
+    const appliedLimit = 20;
+    const result = await pool.query(`SELECT * FROM meant_to_break_events ORDER BY occurred_at DESC LIMIT ${appliedLimit}`);
+    return json(res, 200, { ok: true, events: result.rows, pagination: { requested_limit: requestedLimit, applied_limit: appliedLimit, truncated: result.rows.length === appliedLimit } });
   }
   if (url.pathname.startsWith('/api/')) {
     try {
@@ -117,9 +112,65 @@ async function route(req, res, url, body, ctx) {
     await logEvent(ctx, { service: body.service || 'browser', level: body.level || 'INFO', message: body.message || 'browser event', statusCode: body.statusCode || 200, durationMs: body.durationMs || 0, errorCode: body.errorCode, scenario: body.scenario, metadata: body.metadata || {} });
     return json(res, 202, { ok: true, correlationId: ctx.correlationId, traceId: ctx.traceId });
   }
+  if (req.method === 'POST' && url.pathname === '/api/checkout') {
+    try {
+      const items = Array.isArray(body.items) ? body.items : [];
+      const orderId = String(body.order_id || 'demo-order');
+      const expectedTotal = items.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.qty || 1), 0);
+      const clientTotal = Number(body.client_total);
+      await logEvent(ctx, { service: 'checkout-api', message: 'checkout request accepted', statusCode: 202, metadata: { order_id: orderId, item_count: items.length, client_total: clientTotal } });
+      if (Number.isFinite(clientTotal) && Math.abs(clientTotal - expectedTotal) > 0.01) await logException(ctx, new Error('client cart total does not match line-item total'), { service: 'checkout-api', statusCode: 400, errorCode: 'CART_TOTAL_MISMATCH', scenario: 'cart', sourceFile: 'public/client.js', sourceLine: 19, functionName: 'total', dependency: 'browser-cart-state', investigationHint: 'Compare the cart total calculation with price multiplied by quantity for every line item.', metadata: { order_id: orderId, client_total: clientTotal, expected_total: expectedTotal } });
+      const payment = await callService(ctx, 'payments-worker', 'payment authorization accepted', { statusCode: 200, scenario: 'payment', metadata: { order_id: orderId } });
+      const firstCharge = await callService(payment, 'stripe-adapter', 'payment charged', { statusCode: 200, scenario: 'payment', metadata: { order_id: orderId, idempotency_key: body.idempotency_key || null } });
+      await callService(payment, 'stripe-adapter', 'payment charged', { level: 'ERROR', statusCode: 200, errorCode: 'PAYMENT_DUPLICATE_CHARGE', scenario: 'payment', metadata: { order_id: orderId, duplicate_of_span_id: firstCharge.spanId, idempotency_key: body.idempotency_key || null } });
+      await logException(payment, new Error('payment provider charged the same order twice'), { service: 'checkout-api', statusCode: 500, errorCode: 'PAYMENT_DUPLICATE_CHARGE', scenario: 'payment', sourceFile: 'server.js', sourceLine: 135, functionName: 'route', dependency: 'stripe-adapter', investigationHint: 'Make the payment operation idempotent by persisting and reusing an idempotency key before charging.', metadata: { order_id: orderId, duplicate_of_span_id: firstCharge.spanId } });
+      return json(res, 500, { ok: false, error: 'PAYMENT_DUPLICATE_CHARGE', message: 'We could not complete your payment.', correlationId: ctx.correlationId });
+    } catch (error) {
+      await logException(ctx, error, { service: 'checkout-api', statusCode: 503, errorCode: 'CHECKOUT_HANDLER_FAILED', scenario: 'payment', sourceFile: 'server.js', sourceLine: 117, functionName: 'route', dependency: 'payments-worker' });
+      return json(res, 503, { ok: false, error: 'CHECKOUT_HANDLER_FAILED', correlationId: ctx.correlationId });
+    }
+  }
+  if (req.method === 'PUT' && url.pathname === '/api/profile') {
+    try {
+      const expectedVersion = Number(body.expected_version || 0);
+      await logEvent(ctx, { service: 'profile-api', message: 'profile update accepted', statusCode: 202, metadata: { expected_version: expectedVersion } });
+      const result = await pool.query('UPDATE meant_to_break_profiles SET display_name = $1, version = version + 1 WHERE id = 1 AND version = $2 RETURNING id, display_name, version', [String(body.name || '').trim(), expectedVersion]);
+      if (!result.rowCount) { const error = new Error('profile version no longer matches'); error.name = 'OptimisticLockError'; throw error; }
+      return json(res, 200, { ok: true, profile: result.rows[0], correlationId: ctx.correlationId });
+    } catch (error) {
+      const conflict = error.name === 'OptimisticLockError';
+      await logException(ctx, error, { service: 'profile-api', statusCode: conflict ? 409 : 503, errorCode: conflict ? 'PROFILE_CONFLICT' : 'PROFILE_UPDATE_FAILED', scenario: 'profile', sourceFile: 'public/client.js', sourceLine: 40, functionName: 'profileSave', dependency: 'postgres', investigationHint: 'Compare the version sent by profileSave with the current row version and refresh stale profile state before updating.', metadata: { expected_version: Number(body.expected_version || 0) } });
+      return json(res, conflict ? 409 : 503, { ok: false, error: conflict ? 'PROFILE_CONFLICT' : 'PROFILE_UPDATE_FAILED', message: 'Your profile was updated elsewhere. Refresh the page and try again.', correlationId: ctx.correlationId });
+    }
+  }
+  if (req.method === 'POST' && url.pathname === '/api/exports') {
+    try {
+      await logEvent(ctx, { service: 'export-api', message: 'export request accepted', statusCode: 202, metadata: { format: body.format || 'csv' } });
+      const filterStatus = body.filters.status.toLowerCase();
+      await logEvent(ctx, { service: 'export-worker', message: 'export queued', statusCode: 202, scenario: 'export', metadata: { filter_status: filterStatus } });
+      return json(res, 202, { ok: true, status: 'queued', correlationId: ctx.correlationId });
+    } catch (error) {
+      await logException(ctx, error, { service: 'export-api', statusCode: 500, errorCode: 'EXPORT_NULL_FILTER', scenario: 'export', sourceFile: 'server.js', sourceLine: 155, functionName: 'route', dependency: 'export-worker', investigationHint: 'Validate optional filters before reading filter.status or provide a default filter object.' });
+      return json(res, 500, { ok: false, error: 'EXPORT_NULL_FILTER', message: 'We could not prepare your export. Please try again later.', correlationId: ctx.correlationId });
+    }
+  }
+  if (req.method === 'POST' && url.pathname === '/api/session/refresh') {
+    try {
+      if (await outageResponse(req, res)) return;
+      res.setHeader('set-cookie', 'mtb_session=session_demo; Path=/; SameSite=None');
+      await logException(ctx, new Error('session refresh returned a browser-rejected cookie'), { service: 'identity-web', statusCode: 200, errorCode: 'SESSION_COOKIE_MISCONFIGURED', scenario: 'auth', sourceFile: 'server.js', sourceLine: 166, functionName: 'route', dependency: 'browser-cookie-policy', investigationHint: 'Add Secure to SameSite=None cookies and verify the cookie attributes on the deployed HTTPS origin.', metadata: { same_site: 'None', secure: false, cookie_name: 'mtb_session' } });
+      return json(res, 200, { ok: true, refreshed: true, correlationId: ctx.correlationId });
+    } catch (error) {
+      await logException(ctx, error, { service: 'identity-web', statusCode: 503, errorCode: 'SESSION_REFRESH_FAILED', scenario: 'auth', sourceFile: 'server.js', sourceLine: 165, functionName: 'route', dependency: 'session-store' });
+      return json(res, 503, { ok: false, error: 'SESSION_REFRESH_FAILED', correlationId: ctx.correlationId });
+    }
+  }
   if (req.method === 'POST' && url.pathname === '/api/support') {
-    await logEvent(ctx, { service: 'support-web', message: 'support form accepted', statusCode: 202, metadata: { body_keys: Object.keys(body || {}) } });
-    await callService(ctx, 'support-api', 'support ticket created', { statusCode: 201 });
+    const message = String(body.message || '');
+    await logEvent(ctx, { service: 'support-web', message: 'support form accepted', statusCode: 202, metadata: { message_length: message.trim().length } });
+    if (!message.trim()) await logException(ctx, new Error('support request contains an empty message'), { service: 'support-web', statusCode: 201, errorCode: 'SUPPORT_EMPTY_MESSAGE', scenario: 'support', sourceFile: 'server.js', sourceLine: 129, functionName: 'route', dependency: 'support-api', investigationHint: 'Reject blank support messages at the request boundary before creating a ticket.', metadata: { message_length: 0 } });
+    const downstreamCtx = await startRequest(req, url);
+    await logEvent(downstreamCtx, { service: 'support-api', message: 'support ticket created', statusCode: 201, scenario: 'support', metadata: { upstream_correlation_id: ctx.correlationId } });
     return json(res, 201, { ok: true, correlationId: ctx.correlationId });
   }
 
@@ -130,7 +181,6 @@ async function route(req, res, url, body, ctx) {
       await logEvent(ctx, { service: 'search-ui', message: `search submitted q=${query}`, statusCode: 200, metadata: { query } });
       catalogCtx = await callService(ctx, 'catalog-api', 'search query accepted', { metadata: { query, query_shape: 'catalog_name_lookup' } });
 
-      // Deliberate lab defect: the schema exposes product_name, but this query uses name.
       const result = await pool.query('SELECT id, name, category, price FROM meant_to_break_catalog WHERE name ILIKE $1 ORDER BY id LIMIT 20', [`%${query}%`]);
       await logEvent(catalogCtx, { service: 'postgres', message: 'catalog query completed', statusCode: 200, durationMs: 18, scenario: 'search', metadata: { query, row_count: result.rowCount } });
       return json(res, 200, { ok: true, query, results: result.rows, correlationId: ctx.correlationId });
@@ -140,20 +190,6 @@ async function route(req, res, url, body, ctx) {
     }
   }
 
-  const handlers = {
-    '/api/checkout': { service: 'checkout-api', scenario: 'payment', status: 502, upstream: ['payments-worker', 'stripe-adapter'] },
-    '/api/profile': { service: 'profile-api', scenario: 'profile', status: 409, upstream: ['postgres'] },
-    '/api/exports': { service: 'export-api', scenario: 'export', status: 500, upstream: ['queue', 'export-worker'] },
-    '/api/session/refresh': { service: 'identity-web', scenario: 'auth', status: 401, upstream: ['identity-api', 'session-store'] },
-  };
-  const handler = handlers[url.pathname];
-  if (handler && req.method !== 'GET') {
-    await logEvent(ctx, { service: handler.service, message: `${req.method} ${url.pathname} accepted`, statusCode: 202, metadata: { body_keys: Object.keys(body || {}) } });
-    let parent = ctx;
-    for (const service of handler.upstream) parent = await callService(parent, service, `${handler.scenario} downstream call`, { level: service === handler.upstream.at(-1) ? 'ERROR' : 'WARN', statusCode: handler.status, durationMs: 18, errorCode: scenarios[handler.scenario].code, scenario: handler.scenario });
-    await logEvent(ctx, { service: handler.service, level: 'ERROR', message: scenarios[handler.scenario].message, statusCode: handler.status, durationMs: handler.status === 504 ? 2042 : 110, errorCode: scenarios[handler.scenario].code, scenario: handler.scenario });
-    return json(res, handler.status, { ok: false, error: scenarios[handler.scenario].code, message: scenarios[handler.scenario].userMessage, correlationId: ctx.correlationId });
-  }
   return json(res, 404, { ok: false, error: 'not_found' });
 }
 
