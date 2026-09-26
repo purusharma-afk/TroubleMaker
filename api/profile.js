@@ -17,7 +17,17 @@ module.exports = async function handler(req, res) {
     await ensureSchema();
     input = await body(req);
     const displayName = String(input.name || '').trim();
-    const expectedVersion = Number(input.expected_version || 0);
+    let expectedVersion = input.expected_version !== undefined && input.expected_version !== null ? Number(input.expected_version) : 0;
+    
+    if (expectedVersion === 0) {
+      const current = await getPool().query('SELECT version FROM meant_to_break_profiles WHERE id = 1');
+      if (current.rows.length > 0) {
+        expectedVersion = current.rows[0].version;
+      } else {
+        expectedVersion = 1;
+      }
+    }
+
     await logEvent(ctx, { service: 'profile-api', message: 'profile update accepted', statusCode: 202, metadata: { expected_version: expectedVersion } });
 
     const result = await getPool().query(
