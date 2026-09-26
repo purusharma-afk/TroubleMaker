@@ -29,7 +29,7 @@ module.exports = async function handler(req, res) {
     });
 
     const result = await getPool().query(
-      'SELECT id, name, category, price FROM meant_to_break_catalog WHERE name ILIKE $1 ORDER BY id LIMIT 20',
+      'SELECT id, product_name, category, price FROM meant_to_break_catalog WHERE product_name ILIKE $1 ORDER BY id LIMIT 20',
       [`%${query}%`],
     );
 
